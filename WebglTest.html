@@ -1,0 +1,756 @@
+<htmL>
+  <head>
+    <script type="text/javascript" src="glMatrix-0.9.5.min.js"></script>
+    <script type="text/javascript" src="webgl-utils.js"></script>
+    <script src="jquery-latest.js"></script>
+
+    <script id="shader-fs" type="x-shader/x-fragment">
+        precision mediump float;
+
+        varying vec2 vTextureCoord;
+        varying vec3 vTransformedNormal;
+        varying vec4 vPosition;
+
+        varying vec3 vLightWeighting;
+        varying vec3 color;
+
+        uniform vec3 uMaterialAmbientColor;
+        uniform vec3 uMaterialDiffuseColor;
+        uniform vec3 uMaterialSpecularColor;
+
+        uniform vec3 uAmbientLightingColor;
+
+        uniform vec3 uPointLightingLocation;
+        uniform vec3 uPointLightingDiffuseColor;
+        //uniform vec3 uPointLightingSpecularColor;
+
+
+        uniform sampler2D uSampler;
+
+        uniform bool useTexture;
+
+        void main(void)
+        {
+
+          vec3 ambientLightWeighting = uAmbientLightingColor;
+
+          vec3 lightDirection = normalize(uPointLightingLocation - vPosition.xyz);
+          vec3 normal = normalize(vTransformedNormal);
+
+          vec3 specularLightWeighting = vec3(0.0, 0.0, 0.0);
+
+          float diffuseLightBrightness = max(dot(normal, lightDirection), 0.0);
+          vec3 diffuseLightWeighting = uPointLightingDiffuseColor * diffuseLightBrightness;
+
+          vec3 materialAmbientColor = uMaterialAmbientColor;
+          vec3 materialDiffuseColor = uMaterialDiffuseColor;
+          vec3 materialSpecularColor = uMaterialSpecularColor;
+
+           vec4 color_light = vec4(color*vLightWeighting, 1.0);
+
+           vec4 textureColor = texture2D(uSampler, vec2(vTextureCoord.s, vTextureCoord.t));
+
+           float alpha = 1.0;
+
+           if (useTexture)
+           {
+              materialAmbientColor = materialAmbientColor * textureColor.rgb;
+              materialDiffuseColor = materialDiffuseColor * textureColor.rgb;
+              alpha = textureColor.a;
+            }
+
+
+            gl_FragColor = vec4(
+                materialAmbientColor * ambientLightWeighting
+                + materialDiffuseColor * diffuseLightWeighting
+                + materialSpecularColor * specularLightWeighting,
+                alpha
+            );
+        }
+
+    </script>
+
+    <script id="shader-vs" type="x-shader/x-vertex">
+
+      attribute vec3 aVertexPosition;
+      attribute vec3 aVertexNormal;
+      attribute vec3 uColor;
+      attribute vec2 aTextureCoord;
+
+      uniform mat4 uMVMatrix;
+      uniform mat4 uPMatrix;
+      uniform mat3 uNMatrix;
+
+      uniform vec3 uLightingDirection;
+      uniform vec3 uDirectionalColor;
+      uniform vec3 objColor;
+
+      uniform vec3 uAmbientColor;
+
+      varying vec2 vTextureCoord;
+
+      varying vec4 vPosition;
+
+      varying vec3 vLightWeighting;
+
+      varying vec3 vTransformedNormal;
+
+      varying vec3 color;
+
+      void main(void)
+      {
+        vPosition = uMVMatrix * vec4(aVertexPosition, 1.0);
+
+        gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+
+        color = uColor;
+
+        vec3 transformedNormal = uNMatrix * aVertexNormal;
+        float directionalLightWeighting = max(dot(transformedNormal, uLightingDirection), 0.0);
+        vLightWeighting = uColor + uDirectionalColor * directionalLightWeighting;
+
+         vTextureCoord = aTextureCoord;
+
+         vTransformedNormal = uNMatrix * aVertexNormal;
+      }
+
+    </script>
+
+    <script type="text/javascript">
+
+      function GlContext()
+      {
+        var self = this;
+
+        this.init = function(canvas)
+        {
+          self.gl = canvas.getContext("experimental-webgl");
+          if (!self.gl)
+          {
+              alert("Could not initialise WebGL, sorry :-(");
+              return false;
+          }
+          self.gl.viewportWidth = canvas.width;
+          self.gl.viewportHeight = canvas.height;
+
+          self.initShaders();
+
+          self.gl.clearColor(0.0, 0.0, 0.0, 1.0);
+          self.gl.enable(self.gl.DEPTH_TEST);
+
+          return true;
+        }
+
+        this.getShader = function(id)
+        {
+          var shaderScript = document.getElementById(id);
+
+          if (!shaderScript)
+          {
+              return null;
+          }
+
+          var str = "";
+          var k = shaderScript.firstChild;
+
+          while (k)
+          {
+              if (k.nodeType == 3)
+              {
+                  str += k.textContent;
+              }
+
+              k = k.nextSibling;
+          }
+
+          if (shaderScript.type == "x-shader/x-fragment")
+          {
+              shader = self.gl.createShader(self.gl.FRAGMENT_SHADER);
+          }
+           else if (shaderScript.type == "x-shader/x-vertex")
+          {
+              shader = self.gl.createShader(self.gl.VERTEX_SHADER);
+          } else
+          {
+              return null;
+          }
+
+          self.gl.shaderSource(shader, str);
+          self.gl.compileShader(shader);
+
+          if (!self.gl.getShaderParameter(shader, self.gl.COMPILE_STATUS))
+          {
+              alert(self.gl.getShaderInfoLog(shader));
+              return null;
+          }
+
+          return shader;
+        }
+
+        this.initShaders = function()
+        {
+          var fragmentShader = self.getShader("shader-fs");
+          var vertexShader = self.getShader("shader-vs");
+          self.shaderProgram = self.gl.createProgram();
+
+          self.gl.attachShader(self.shaderProgram, vertexShader);
+          self.gl.attachShader(self.shaderProgram, fragmentShader);
+          self.gl.linkProgram(self.shaderProgram);
+
+          if (!self.gl.getProgramParameter(self.shaderProgram, self.gl.LINK_STATUS))
+          {
+              alert("Could not initialise shaders");
+              return false;
+          }
+
+          self.gl.useProgram(this.shaderProgram);
+          self.shaderProgram.vertexPositionAttribute = this.gl.getAttribLocation(self.shaderProgram, "aVertexPosition");
+          self.gl.enableVertexAttribArray(self.shaderProgram.vertexPositionAttribute);
+          self.shaderProgram.vertexNormalAttribute = self.gl.getAttribLocation(self.shaderProgram, "aVertexNormal");
+          self.gl.enableVertexAttribArray(self.shaderProgram.vertexNormalAttribute);
+          self.shaderProgram.uColor = self.gl.getAttribLocation(self.shaderProgram, "uColor");
+          self.gl.enableVertexAttribArray(self.shaderProgram.uColor);
+          self.shaderProgram.textureCoordAttribute = self.gl.getAttribLocation(self.shaderProgram, "aTextureCoord");
+          self.gl.enableVertexAttribArray(self.shaderProgram.textureCoordAttribute);
+
+          self.shaderProgram.pMatrixUniform = self.gl.getUniformLocation(self.shaderProgram, "uPMatrix");
+          self.shaderProgram.mvMatrixUniform = self.gl.getUniformLocation(self.shaderProgram, "uMVMatrix");
+          self.shaderProgram.nMatrixUniform = self.gl.getUniformLocation(self.shaderProgram, "uNMatrix");
+          self.shaderProgram.lightingDirectionUniform = self.gl.getUniformLocation(self.shaderProgram, "uLightingDirection");
+          self.shaderProgram.directionalColorUniform = self.gl.getUniformLocation(self.shaderProgram, "uDirectionalColor");
+          self.shaderProgram.ambientColorUniform = self.gl.getUniformLocation(self.shaderProgram, "uAmbientColor");
+          self.shaderProgram.samplerUniform = self.gl.getUniformLocation(self.shaderProgram, "uSampler");
+          self.shaderProgram.useTexture = self.gl.getUniformLocation(self.shaderProgram, "useTexture");
+
+          self.shaderProgram.ambientLightingColorUniform = self.gl.getUniformLocation(self.shaderProgram, "uAmbientLightingColor");
+          self.shaderProgram.pointLightingLocationUniform = self.gl.getUniformLocation(self.shaderProgram, "uPointLightingLocation");
+          self.shaderProgram.pointLightingSpecularColorUniform = self.gl.getUniformLocation(self.shaderProgram, "uPointLightingSpecularColor");
+          self.shaderProgram.pointLightingDiffuseColorUniform = self.gl.getUniformLocation(self.shaderProgram, "uPointLightingDiffuseColor");
+          //self.shaderProgram.objColor = self.gl.getUniformLocation(self.shaderProgram, "objColor");
+
+          self.shaderProgram.MaterialAmbientColor = self.gl.getUniformLocation(self.shaderProgram, "uMaterialAmbientColor");
+          self.shaderProgram.MaterialDiffuseColor = self.gl.getUniformLocation(self.shaderProgram, "uMaterialDiffuseColor");
+          self.shaderProgram.MaterialSpecularColor = self.gl.getUniformLocation(self.shaderProgram, "uMaterialSpecularColor");
+          self.shaderProgram.MaterialShininess = self.gl.getUniformLocation(self.shaderProgram, "uMaterialShininess");
+
+        }
+      }
+
+        var dump_obj = new Object();
+
+        function App()
+        {
+          var self = this;
+
+          this.init = function(_gl, _shaderProgram)
+          {
+            self.gl = _gl;
+            self.shaderProgram = _shaderProgram;
+            self.objects = new Array();
+
+            self.mvMatrix = mat4.create();
+            self.mvMatrixStack = [];
+            self.pMatrix = mat4.create();
+
+
+            //==========================================================================
+
+
+            var o3 = new LoadedObject();
+            o3.init(self.gl);
+
+            self.angle1 = 0;
+            self.angle2 = 0;
+
+            self.scale_coef = 1;
+
+            self.mouse = {x:0, y:0};
+
+            dump_obj = o3;
+
+            self.addObject(o3);
+
+            self.update();
+          }
+
+          this.addObject = function(object)
+          {
+            self.objects.push(object);
+          }
+
+          this.update = function()
+          {
+            requestAnimFrame(self.update);
+
+            self.draw();
+          }
+
+          this.draw = function ()
+          {
+            self.gl.viewport(0, 0, self.gl.viewportWidth, self.gl.viewportHeight);
+            self.gl.clear(self.gl.COLOR_BUFFER_BIT | self.gl.DEPTH_BUFFER_BIT);
+
+            mat4.perspective(45, self.gl.viewportWidth / self.gl.viewportHeight, 0.1, 100.0, self.pMatrix);
+
+            mat4.identity(self.mvMatrix);
+            mat4.translate(self.mvMatrix, [0.0, 0.0, -7.0]);
+
+            mat4.scale(self.mvMatrix, [self.scale_coef,self.scale_coef,self.scale_coef]);
+
+            mat4.rotate(self.mvMatrix, degToRad(this.angle1), [0, 1, 0]);
+            mat4.rotate(self.mvMatrix, degToRad(this.angle2), [1, 0, 0]);
+
+            self.setMatrixUniforms();
+
+            var lightingDirection = [0.0, 0.0, -1.0];
+            var adjustedLD = vec3.create();
+            vec3.normalize(lightingDirection, adjustedLD);
+            vec3.scale(adjustedLD, -1);
+            self.gl.uniform3fv(self.shaderProgram.lightingDirectionUniform, adjustedLD);
+
+            self.gl.uniform3f(self.shaderProgram.directionalColorUniform, 1.0, 0.0, 1.0);
+
+            self.gl.uniform3f(self.shaderProgram.ambientColorUniform, 0.2, 0.2, 0.2);
+
+
+            for(var i = 0; i < self.objects.length; i++) self.objects[i].draw(self.gl, self.shaderProgram);
+          }
+
+          this.setMatrixUniforms = function()
+          {
+            self.gl.uniformMatrix4fv(self.shaderProgram.pMatrixUniform, false, self.pMatrix);
+            self.gl.uniformMatrix4fv(self.shaderProgram.mvMatrixUniform, false, self.mvMatrix);
+
+            var normalMatrix = mat3.create();
+            mat4.toInverseMat3(self.mvMatrix, normalMatrix);
+            mat3.transpose(normalMatrix);
+            self.gl.uniformMatrix3fv(self.shaderProgram.nMatrixUniform, false, normalMatrix);
+          }
+
+          this.mvPushMatrix = function() 
+          {
+            var copy = mat4.create();
+            mat4.set(self.mvMatrix, copy);
+            self.mvMatrixStack.push(copy);
+          }
+
+          this.mvPopMatrix = function()
+          {
+            if (self.mvMatrixStack.length == 0) 
+            {
+                throw "Invalid popMatrix!";
+            }
+
+            self.mvMatrix =self.mvMatrixStack.pop();
+          }
+
+          function degToRad(degrees)
+          {
+            return degrees * Math.PI / 180;
+          }
+
+
+        this.mouse_down = function(e)
+        {
+          self.mouse.x = e.x;
+          self.mouse.y = e.y;
+        }
+
+        this.mouse_up = function(e)
+        {
+          if (e.x != self.mouse.x || e.y != self.mouse.y)
+          {
+            if ((e.x - self.mouse.x) != 0 )
+            {
+              self.angle1 += (e.x - self.mouse.x)/10.0;
+            }
+            if ((e.y - self.mouse.y) != 0 )
+            {
+              self.angle2 += (e.y - self.mouse.y)/10.0;
+            }
+
+            self.mouse.x = e.x;
+            self.mouse.y = e.y;
+          }
+        }
+
+        this.mouse_wheel = function(e)
+        {
+          if (e.wheelDelta > 0)
+          {
+            if (self.scale_coef > 1) self.scale_coef++;
+            else self.scale_coef += 0.1;
+          }
+
+          if (e.wheelDelta < 0)
+          {
+            if (self.scale_coef > 1) self.scale_coef--;
+            else self.scale_coef -= 0.1;
+          }
+        }
+
+        this.key_press = function(e)
+        {
+          if (e.charCode == 43)
+          {
+            if (self.scale_coef > 1) self.scale_coef++;
+            else self.scale_coef += 0.1;
+          }
+          if (e.charCode == 45)
+
+
+          {
+            if (self.scale_coef > 1) self.scale_coef--;
+            else self.scale_coef -= 0.1;
+          }
+        }
+      }
+
+        var get_data2;
+        var get_data3;
+        var vertices_12 = [];
+        var normals_12 = [];
+        var indexes_12 = [];
+        var colors_12 = [];
+        var text_coord = [];
+
+        var normals = [];
+        var indexes = [];
+        var vn =[];
+
+        var texture_load_flag = false;
+
+        function LoadedObject()
+        {
+          var self = this;
+
+          function compare_arrays(arr1, arr2)
+          {
+            for(var i =0; i < arr1.length; i++)
+            {
+              if(parseFloat(arr1[i]) != parseFloat(arr2[i])) return false;
+            }
+            return true;
+          }
+
+          this.prepare_obj_to_vbo = function(gl, vertices, normals, textures, vertices_indexes, normals_indexes, textures_indexes, materials_intervals, materials)
+          {
+            console.log('start');
+            var vertices_normals = new Array();
+            var new_indexes = new Array();
+
+            var new_vertices = new Array();
+            var new_normals = new Array();
+            var new_colors = new Array();
+            var new_textures_coordinats = new Array();
+            var new_materials_intervals = new Array();
+            var new_materials_intervals2 = new Array();
+
+            var material_index = 0;
+            var material_name = '';
+            var prev_material_name = '';
+
+            for(var i = 0; i < vertices_indexes.length; i++)
+            {
+              if (i >= materials_intervals[material_index]['position'] && (material_index == (materials_intervals.length - 1) || i < materials_intervals[material_index + 1]['position']))
+              {
+                material_name = materials_intervals[material_index]['name'];
+              }
+              else if (i > materials_intervals[material_index + 1]['position'])
+              {
+                material_index++;
+                material_name = materials_intervals[material_index]['name'];
+              }
+
+              var pair_exists = false;
+              for (var j = 0; j < vertices_normals.length; j++)
+              {
+                if (compare_arrays(vertices_normals[j][0], vertices[vertices_indexes[i]])
+                      && compare_arrays(vertices_normals[j][1], normals[normals_indexes[i]])
+                       && compare_arrays(vertices_normals[j][3], textures[textures_indexes[i]])
+                      && vertices_normals[j][2] == material_name)
+                {
+                  new_indexes.push(j);
+                  pair_exists = true;
+                  break;
+                }
+              }
+              if (!pair_exists)
+              {
+                   vertices_normals.push([vertices[vertices_indexes[i]], normals[normals_indexes[i]], material_name, textures[textures_indexes[i]]]);
+                   new_indexes.push(vertices_normals.length - 1);
+              }
+
+              if (prev_material != material_name)
+              {
+                new_materials_intervals2.push(new_indexes[new_indexes.length -1], material_name);
+                prev_material = material_name;
+              }
+
+            }
+
+            console.log('end first watch');
+
+            vn = vertices_normals;
+
+            var prev_material = '';
+
+            prev_material = [];
+
+            for(var i =0; i < vertices_normals.length; i++)
+            {
+              new_vertices.push(vertices_normals[i][0][0]);
+              new_vertices.push(vertices_normals[i][0][1]);
+              new_vertices.push(vertices_normals[i][0][2]);
+
+              new_normals.push(vertices_normals[i][1][0]);
+              new_normals.push(vertices_normals[i][1][1]);
+              new_normals.push(vertices_normals[i][1][2]);
+
+              new_colors.push(materials[vertices_normals[i][2]]['Kd'][0]);
+              new_colors.push(materials[vertices_normals[i][2]]['Kd'][1]);
+              new_colors.push(materials[vertices_normals[i][2]]['Kd'][2]);
+
+              if (vertices_normals[i][2] != prev_material)
+              {
+                new_materials_intervals.push([i, vertices_normals[i][2]]);
+                prev_material = vertices_normals[i][2];
+              }
+
+              new_textures_coordinats.push(vertices_normals[i][3][0]);
+              new_textures_coordinats.push(vertices_normals[i][3][1]);
+            }
+
+            console.log('end new verticles');
+
+            self.materials_intervals = new_materials_intervals;
+
+            vertices_12 = new_vertices;
+            console.log(new_vertices)
+            self.vertexBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, self.vertexBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(new_vertices), gl.STATIC_DRAW);
+            self.vertexBuffer.itemSize = 3;
+            self.vertexBuffer.numItems = new_vertices.length/3;
+
+            normals_12 = new_normals
+            self.normalsBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, self.normalsBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(new_normals), gl.STATIC_DRAW);
+            self.normalsBuffer.itemSize = 3;
+            self.normalsBuffer.numItems = new_normals.length/3;
+
+            text_coord = new_textures_coordinats;
+            self.textureCoordBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, self.textureCoordBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(new_textures_coordinats), gl.STATIC_DRAW);
+            self.textureCoordBuffer.itemSize = 2;
+            self.textureCoordBuffer.numItems = new_textures_coordinats.length/2;
+
+            colors_12 = new_colors;
+            self.colorsBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, self.colorsBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(new_colors), gl.STATIC_DRAW);
+            self.colorsBuffer.itemSize = 3;
+            self.colorsBuffer.numItems = new_colors.length/3;
+
+            indexes_12 = new_indexes;
+            self.indexesBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, self.indexesBuffer);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(new_indexes), gl.STATIC_DRAW);
+            self.indexesBuffer.itemSize = 1;
+            self.indexesBuffer.numItems = new_indexes.length;
+
+            console.log('end initialise buffers');
+          }
+
+          this.init = function(gl)
+          {
+
+            var get_vertices = new Array();
+            var get_normals = new Array();
+            var get_vertices_indexes = new Array();
+            var get_normals_indexes = new Array();
+            var get_textures_indexes = new Array();
+
+
+            $.ajax({
+          		type: "POST",
+          		url: './get_model.php',
+              async: false,
+              data: {action: 'get', name: 'Cardboard box2.obj', part: 'vertices_info'},
+              success: function(data) {
+                if (data.status == 'success')
+                {
+                  get_data2 = data;
+              }
+              }
+          	});
+
+            $.ajax({
+              type: "POST",
+              url: './get_model.php',
+              async: false,
+              data: {action: 'get', name: 'Cardboard box2.obj', part:'model_info'},
+              success: function(data) {
+                if (data.status == 'success')
+                {
+                  get_data3 = data;
+
+                  data.vertixes_indexes.forEach(function(item, i, arr){get_vertices_indexes.push(parseInt(item));});
+                  data.normals_indexes.forEach(function(item, i, arr){get_normals_indexes.push(parseInt(item));});
+                  data.textures_indexes.forEach(function(item, i, arr){get_textures_indexes.push(parseInt(item));});
+
+                  self.textures_id = new Array();
+
+                  for(material in data.materials)
+                  {
+                    console.log('material ' + data.materials[material]);
+                    if (data.materials[material]['map_Kd'])
+                    {
+                      self.textures_id.push(self.loat_textures(data.materials[material]['map_Kd'], gl));
+                    }
+                  }
+
+                  self.materials = data.materials;
+                }
+                }
+              });
+
+
+              self.prepare_obj_to_vbo(gl, get_data2.vertices, get_data2.normals, get_data2.textures, get_vertices_indexes, get_normals_indexes,get_textures_indexes, get_data3.material_intervals, get_data3.materials);
+          }
+
+          this.draw = function(gl, shaderProgram)
+          {
+
+            if (texture_load_flag || true)
+            {
+
+              var num_items = 0;
+              var prev_offset_element = 0;
+              for (var i = 0; i < self.materials_intervals.length; i++)
+              {
+                //gl.uniform3f(shaderProgram.color, self.color[0], self.color[1], self.color[1]);
+                gl.bindBuffer(gl.ARRAY_BUFFER, self.vertexBuffer);
+                gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, self.vertexBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, self.normalsBuffer);
+                gl.vertexAttribPointer(shaderProgram.vertexNormalAttribute, self.normalsBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, self.colorsBuffer);
+                gl.vertexAttribPointer(shaderProgram.uColor, self.colorsBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, self.textureCoordBuffer);
+                gl.vertexAttribPointer(shaderProgram.textureCoordAttribute, self.textureCoordBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+                if (self.textures_id.length > 0)
+                {
+                  gl.activeTexture(gl.TEXTURE0);
+                  gl.bindTexture(gl.TEXTURE_2D, self.textures_id[0]);
+                  gl.uniform1i(shaderProgram.samplerUniform, 0);
+
+                   gl.uniform1i(shaderProgram.useTexture, true);
+                }
+                else
+                {
+                    gl.uniform1i(shaderProgram.useTexture, false);
+                }
+
+                gl.uniform3f(shaderProgram.MaterialAmbientColor, self.materials[self.materials_intervals[i][1]]['Ka'][0], self.materials[self.materials_intervals[i][1]]['Ka'][1], self.materials[self.materials_intervals[i][1]]['Ka'][2]);
+                gl.uniform3f(shaderProgram.MaterialDiffuseColor, self.materials[self.materials_intervals[i][1]]['Kd'][0], self.materials[self.materials_intervals[i][1]]['Kd'][1], self.materials[self.materials_intervals[i][1]]['Kd'][2]);
+                gl.uniform3f(shaderProgram.MaterialSpecularColor, self.materials[self.materials_intervals[i][1]]['Ks'][0], self.materials[self.materials_intervals[i][1]]['Ks'][1], self.materials[self.materials_intervals[i][1]]['Ks'][2]);
+
+
+                gl.uniform3f(shaderProgram.MaterialAmbientColor, 1.0, 1.0, 1.0);
+                gl.uniform3f(shaderProgram.MaterialDiffuseColor, 1.0, 1.0, 1.0);
+                gl.uniform3f(shaderProgram.MaterialSpecularColor, 0.0, 0.0, 0.0);
+
+                gl.uniform3f(shaderProgram.ambientLightingColorUniform, 0.2, 0.2, 0.2);
+                gl.uniform3f(shaderProgram.pointLightingLocationUniform, 0, 0, -5);
+                gl.uniform3f(shaderProgram.pointLightingDiffuseColorUniform, 0.8, 0.8, 0.8);
+
+                if (/*self.materials_intervals[i + 1]*/ i < (self.materials_intervals.length -2) )  num_items = self.materials_intervals[i + 1][0] - self.materials_intervals[i][0];
+                  else num_items = self.indexesBuffer.numItems - self.materials_intervals[self.materials_intervals.length-1][0];
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, self.indexesBuffer);
+                gl.drawElements(gl.TRIANGLES, num_items, gl.UNSIGNED_SHORT, self.materials_intervals[i][0]);
+                 //gl.drawArrays(gl.TRIANGLES, 0, self.vertexBuffer.numItems);
+
+             }
+           }
+          }
+
+          this.loat_textures = function(image_name, gl)
+          {
+            var image = new Image();
+            var  texture_id = gl.createTexture();
+            texture_id.image = image;
+            image.src = image_name;
+            image.onload = function ()
+            {
+              gl.bindTexture(gl.TEXTURE_2D, texture_id);
+              gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+              gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texture_id.image);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+              gl.bindTexture(gl.TEXTURE_2D, null);
+              self.image = texture_id.image;
+              texture_load_flag = true;
+            }
+
+            return texture_id;
+
+          }
+
+
+        }
+
+        function mouse_down_handler(event)
+        {
+          app1.mouse_down(event);
+        }
+
+        function mouse_up_handler(event)
+        {
+          app1.mouse_up(event);
+        }
+
+        function mouse_wheel(event)
+        {
+          app1.mouse_wheel(event);
+        }
+
+        function key_press(event)
+        {
+          app1.key_press(event);
+        }
+
+      var app1;
+
+      function webGLStart()
+      {
+        gl1 = new GlContext();
+
+        var canvas = document.getElementById("canvas1");
+
+        gl1.init(canvas);
+
+        app1 = new App();
+        app1.init(gl1.gl, gl1.shaderProgram);
+
+        document.onmousedown = mouse_down_handler;
+        document.onmouseup = mouse_up_handler;
+        document.onmousewheel = mouse_wheel;
+        document.onkeypress = key_press;
+      }
+
+
+    </script>
+  </head>
+  <body onload="webGLStart();">
+      <canvas id="canvas1" style="border: none;" width="500" height="500"></canvas>
+  </body>
+</html>
